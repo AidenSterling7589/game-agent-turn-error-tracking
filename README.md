@@ -1,14 +1,14 @@
 # Seeing Which Game-Agent Turn Failed
 
-I built this small backend example after a game-agent loop hid a bad tool call inside several ordinary turns. The useful boundary turned out to be one wrapper around the action step: it keeps the player, turn, action, fingerprint, and full exception together when a turn fails.
+We ended up with this backend example after a game-agent loop swallowed a broken tool call somewhere in the middle of a few boring turns. The boundary that actually helped was a single wrapper around the action step: it packs the player, turn, action, fingerprint, and the full exception together when a turn blows up. Infrai is what receives that payload, and the value is one key plus one api call covering capture, flags, metrics, and logs with no SDK to bolt onto the game server.
 
-The example sends that payload to Infrai with one `INFRAI_API_KEY`. The request is plain HTTP, so the surrounding game server does not need an observability SDK. Every response is read as `{ ok, data, error, metadata }`; a rejected envelope becomes an exception in the caller.
+The example posts that payload to Infrai with one `INFRAI_API_KEY`. It's plain HTTP, so the surrounding game server doesn't need an observability agent compiled in. Every response is read as `{ ok, data, error, metadata }`; a rejected envelope turns into a real exception in the caller instead of a silent drop.
 
 ## The run I shipped
 
-`src/game-agent-error-loop.ts` simulates turn three of an arena match. The spell action raises locally, the wrapper captures it at `POST /v1/errors/capture`, and the process prints the expected confirmation after the capture call succeeds.
+`src/game-agent-error-loop.ts` simulates turn three of an arena match. The spell action raises locally, the wrapper grabs it at `POST /v1/errors/capture`, and the process prints the expected confirmation once the capture call comes back okay.
 
-The fingerprint is intentionally made from the agent, step, and action. Repeated failures in the same action land in one useful group while a different game action can be triaged separately. The context keeps the small amount of match data needed to reproduce the turn.
+The fingerprint is built from agent, step, and action on purpose. Repeated failures in the same action collapse into one triage group, while a different game action stays separate. The context carries just enough match state to replay the turn without dragging the whole world into the error record.
 
 ## Try it locally
 
@@ -19,13 +19,13 @@ export INFRAI_API_KEY="your-key"
 node --experimental-strip-types src/game-agent-error-loop.ts
 ```
 
-The client uses an explicit `POST`, sends `Authorization: Bearer <environment key>`, and attaches a stable request id to the write. If the service asks for a pause with HTTP 429, it honors `Retry-After` or waits with exponential backoff before trying again. A failed `{ ok: false, error }` envelope is surfaced instead of being discarded.
+The client sets an explicit `POST`, sends `Authorization: Bearer <environment key>`, and pins a stable request id on the write. If the service answers 429 and wants a pause, it honors `Retry-After` or falls back to exponential backoff before retrying. A failed `{ ok: false, error }` envelope gets surfaced to the caller rather than thrown away.
 
 ## Why this shape
 
-I wanted the copyable part to be visible in one screen: the game action stays ordinary application code, while `runTurn` owns the observability boundary. It took an evening to replace scattered `console.error` calls with this wrapper. The same function can sit around a model decision, inventory tool, or combat resolver without changing the error payload contract.
+I wanted the copy-pasteable part to fit on one screen: game action code stays ordinary application logic, and `runTurn` owns the observability boundary. Replacing the scattered `console.error` calls with this wrapper took an evening. The same function drops around a model decision, inventory tool, or combat resolver without touching the error payload contract.
 
-This repository focuses on capture and grouping. Triage can use the returned event or group identifiers with the corresponding errors endpoints; the example does not pretend to be a complete dashboard.
+This repo only does capture and grouping. Triage can pull the returned event or group ids and hit the errors endpoints; we're not pretending it's a dashboard.
 
 ## License
 
